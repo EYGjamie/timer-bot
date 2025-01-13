@@ -1,0 +1,2 @@
+# timer-bot
+Discord Timerbot
