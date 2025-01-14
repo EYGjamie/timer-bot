@@ -32,6 +32,7 @@ func main() {
 	}
 
 	handler.StartLectureTimer(dg)
+	handler.StartProgressUpdater(dg)
 
 	// Bot starten
 	err = dg.Open()
