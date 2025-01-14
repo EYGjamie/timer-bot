@@ -6,14 +6,15 @@ import (
 	"math/rand"
 	"strings"
 	"time"
+	"sort"
 
 	"github.com/bwmarrin/discordgo"
 )
 
 var (
 	symbols = []string{"❓", "🍒", "🍋", "🍊", "🍇", "⭐", "💎"}
-	symbolFrequencies = []int{15, 25, 25, 15, 10, 7, 3} // Häufigkeiten anpassbar
-	payoutFactors = map[string]int{
+	symbolFrequencies = []int{15, 25, 20, 15, 10, 10, 5} // Häufigkeiten anpassbar
+	payoutFactors = map[string]float32{
 		"❓❓❓": 1,
 		"🍒🍒🍒": 4,
 		"🍋🍋🍋": 5,
@@ -21,6 +22,25 @@ var (
 		"🍇🍇🍇": 20,
 		"⭐⭐⭐": 40,
 		"💎💎💎": 100,
+		// Erweiterte Kombinationen
+		"🍒🍒❓": 0.2,
+		"🍒❓🍒": 0.2,
+		"❓🍒🍒": 0.2,
+		"🍋🍋❓": 0.3,
+		"🍋❓🍋": 0.3,
+		"❓🍋🍋": 0.3,
+		"🍊🍊❓": 0.4,
+		"🍊❓🍊": 0.4,
+		"❓🍊🍊": 0.4,
+		"🍇🍇❓": 0.8,
+		"🍇❓🍇": 0.8,
+		"❓🍇🍇": 0.8,
+		"⭐⭐❓": 1.6,
+		"⭐❓⭐": 1.6,
+		"❓⭐⭐": 1.6,
+		"💎💎❓": 5.0,
+		"💎❓💎": 5.0,
+		"❓💎💎": 5.0,
 	}
 )
 
@@ -114,7 +134,14 @@ func convertToFixedArray(board [][]string) [3][3]string {
 	return fixedBoard
 }
 
-func calculatePayout(board [3][3]string, bet int) (int, []string) {
+func sortWinningLine(line []string) string {
+	// Sortiere die Symbole in der Gewinnlinie alphabetisch
+	sort.Strings(line)
+	return strings.Join(line, "")
+}
+
+
+func calculatePayout(board [3][3]string, bet int) (float32, []string) {
 	lines := [][][2]int{
 		{{0, 0}, {0, 1}, {0, 2}}, // Horizontal oben
 		{{1, 0}, {1, 1}, {1, 2}}, // Horizontal Mitte
@@ -122,27 +149,35 @@ func calculatePayout(board [3][3]string, bet int) (int, []string) {
 		{{0, 0}, {1, 0}, {2, 0}}, // Vertikal links
 		{{0, 1}, {1, 1}, {2, 1}}, // Vertikal Mitte
 		{{0, 2}, {1, 2}, {2, 2}}, // Vertikal rechts
-		{{0, 0}, {1, 1}, {2, 2}}, // Diagonal \ 
+		{{0, 0}, {1, 1}, {2, 2}}, // Diagonal \
 		{{0, 2}, {1, 1}, {2, 0}}, // Diagonal /
 	}
 
-	payout := 0
+	var payout float32 = 0
 	var winningLines []string
 
 	for _, line := range lines {
 		symbol := board[line[0][0]][line[0][1]]
 		match := true
+
 		for _, pos := range line {
-			if board[pos[0]][pos[1]] != symbol {
+			if board[pos[0]][pos[1]] != symbol && board[pos[0]][pos[1]] != "❓" {
 				match = false
 				break
 			}
 		}
+
 		if match {
-			winningLine := fmt.Sprintf("%s%s%s", board[line[0][0]][line[0][1]], board[line[1][0]][line[1][1]], board[line[2][0]][line[2][1]])
+			// Sortiere die Gewinnlinie, um die Reihenfolge zu ignorieren
+			winningLine := sortWinningLine([]string{
+				board[line[0][0]][line[0][1]],
+				board[line[1][0]][line[1][1]],
+				board[line[2][0]][line[2][1]],
+			})
+
 			factor, exists := payoutFactors[winningLine]
 			if exists {
-				payout += bet * factor
+				payout += float32(bet) * factor
 				winningLines = append(winningLines, winningLine)
 			}
 		}
@@ -150,7 +185,6 @@ func calculatePayout(board [3][3]string, bet int) (int, []string) {
 
 	return payout, winningLines
 }
-
 
 func MoneyAll(s *discordgo.Session, db *sql.DB, guildID string, amount int) error {
 	// Alle Mitglieder der Gilde abfragen
@@ -210,7 +244,7 @@ func SlotCommand(s *discordgo.Session, m *discordgo.InteractionCreate, db *sql.D
 	defer setUserPlaying(m.Member.User.ID, false) // Status zurücksetzen, wenn die Funktion beendet wird	
 	
 	// Balance Überprüfen
-	var balance int
+	var balance float32
 	err := db.QueryRow("SELECT balance FROM users WHERE user_id = ?", m.Member.User.ID).Scan(&balance)
 	if err != nil {
 		s.InteractionRespond(m.Interaction, &discordgo.InteractionResponse{
@@ -234,7 +268,7 @@ func SlotCommand(s *discordgo.Session, m *discordgo.InteractionCreate, db *sql.D
 		return
 	}
 
-	if balance < bet {
+	if balance < float32(bet) {
 		s.InteractionRespond(m.Interaction, &discordgo.InteractionResponse{
 			Type: discordgo.InteractionResponseChannelMessageWithSource,
 			Data: &discordgo.InteractionResponseData{
@@ -275,7 +309,7 @@ func SlotCommand(s *discordgo.Session, m *discordgo.InteractionCreate, db *sql.D
 	fixedBoard := convertToFixedArray(board)
 	payout, winningLines := calculatePayout(fixedBoard, bet)
 	if payout > 0 {
-		db.Exec("UPDATE users SET balance = balance + ? WHERE user_id = ?", payout-bet, m.Member.User.ID)
+		db.Exec("UPDATE users SET balance = balance + ? WHERE user_id = ?", payout-float32(bet), m.Member.User.ID)
 	} else {
 		db.Exec("UPDATE users SET balance = balance - ? WHERE user_id = ?", bet, m.Member.User.ID)
 	}
@@ -293,7 +327,7 @@ func SlotCommand(s *discordgo.Session, m *discordgo.InteractionCreate, db *sql.D
 			},
 			{
 				Name:   "Gewinn",
-				Value:  fmt.Sprintf("%d", payout),
+				Value:  fmt.Sprintf("%.0f", payout),
 				Inline: true,
 			},
 			{
@@ -303,7 +337,7 @@ func SlotCommand(s *discordgo.Session, m *discordgo.InteractionCreate, db *sql.D
 			},
 			{
 				Name:   "Neuer Kontostand",
-				Value:  fmt.Sprintf("%d", balance+payout-bet),
+				Value:  fmt.Sprintf("%.0f", float32(balance)+payout-float32(bet)),
 				Inline: false,
 			},
 		},
