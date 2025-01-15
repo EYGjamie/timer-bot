@@ -143,6 +143,11 @@ func main() {
 				// Aufruf des Leaderboard-Handlers
 				handler.LeaderboardHandler(s, m, db)	
 
+			case "blackjack":
+				// Einsatz aus den Befehlsoptionen extrahieren
+				bet := int(m.ApplicationCommandData().Options[0].IntValue())
+				handler.BlackjackCommand(s, m, db, bet)
+
 			}
 		})
 
@@ -251,6 +256,22 @@ func main() {
 	})
 	if err != nil {
 		log.Fatalf("Fehler beim Registrieren von /leaderboard: %v", err)
+	}
+
+	_, err = dg.ApplicationCommandCreate(dg.State.User.ID, "", &discordgo.ApplicationCommand{
+		Name:        "blackjack",
+		Description: "Spiele eine Runde Blackjack",
+		Options: []*discordgo.ApplicationCommandOption{
+			{
+				Type:        discordgo.ApplicationCommandOptionInteger,
+				Name:        "einsatz",
+				Description: "Der Betrag, den du setzen möchtest",
+				Required:    true,
+			},
+		},
+	})
+	if err != nil {
+		log.Fatalf("Fehler beim Registrieren des /blackjack-Befehls: %v", err)
 	}
 
 	// handler.StartLectureTimer(dg)
