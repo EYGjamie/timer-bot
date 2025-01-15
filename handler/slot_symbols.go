@@ -2,7 +2,7 @@ package handler
 
 var (
 	symbols = []string{"❌", "❓", "🍒", "🍋", "🍊", "🍇", "⭐", "💎", "💰"}
-	symbolFrequencies = []int{10, 13, 25, 20, 15, 13, 9, 5, 1} // Häufigkeiten anpassbar
+	symbolFrequencies = []int{5, 13, 25, 20, 15, 13, 9, 5, 1} // Häufigkeiten anpassbar
 	payoutFactors = map[string]float32{
 
 		// Standart Kombis
