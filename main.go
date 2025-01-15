@@ -138,6 +138,11 @@ func main() {
 						Content: fmt.Sprintf("Du hast aktuell %d Spielgeld.", balance),
 					},
 				})
+
+			case "leaderboard":
+				// Aufruf des Leaderboard-Handlers
+				handler.LeaderboardHandler(s, m, db)	
+
 			}
 		})
 
@@ -239,7 +244,14 @@ func main() {
 	if err != nil {
 		log.Fatalf("Fehler beim Registrieren von /money: %v", err)
 	}
-	
+
+	_, err = dg.ApplicationCommandCreate(dg.State.User.ID, "1181238521734901770", &discordgo.ApplicationCommand{
+		Name:        "leaderboard",
+		Description: "Zeigt die Rangliste der Spieler mit dem meisten Spielgeld an",
+	})
+	if err != nil {
+		log.Fatalf("Fehler beim Registrieren von /leaderboard: %v", err)
+	}
 
 	// handler.StartLectureTimer(dg)
 	// handler.StartProgressUpdater(dg)
