@@ -109,7 +109,7 @@ func main() {
 					s.InteractionRespond(m.Interaction, &discordgo.InteractionResponse{
 						Type: discordgo.InteractionResponseChannelMessageWithSource,
 						Data: &discordgo.InteractionResponseData{
-							Content: fmt.Sprintf("%d Spielgeld wurden Benutzer %s hinzugefügt.", amount, userID),
+							Content: fmt.Sprintf("%d Spielgeld wurden Benutzer <@%s> hinzugefügt.", amount, userID),
 						},
 					})
 				}
@@ -135,7 +135,7 @@ func main() {
 				s.InteractionRespond(m.Interaction, &discordgo.InteractionResponse{
 					Type: discordgo.InteractionResponseChannelMessageWithSource,
 					Data: &discordgo.InteractionResponseData{
-						Content: fmt.Sprintf("Du hast aktuell %d Spielgeld.", balance),
+						Content: fmt.Sprintf("Du hast aktuell %.0f Spielgeld.", balance),
 					},
 				})
 
@@ -149,7 +149,21 @@ func main() {
 				handler.BlackjackCommand(s, m, db, bet)
 
 			}
+
+				// Button-Interaktionen
+		if m.Type == discordgo.InteractionMessageComponent {
+			switch m.MessageComponentData().CustomID {
+			case "blackjack_hit":
+				// Logik für "Hit" implementieren
+			case "blackjack_stay":
+				// Logik für "Stay" implementieren
+			case "blackjack_double":
+				// Logik für "Double" implementieren
+			}
+		}
 		})
+
+
 
 	// Bot starten
 	err = dg.Open()

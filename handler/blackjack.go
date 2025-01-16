@@ -22,7 +22,6 @@ type BlackjackGame struct {
 
 var activeBlackjackGames = make(map[string]*BlackjackGame)
 
-// Karten-Deck
 var cards = []string{
 	"A♠", "2♠", "3♠", "4♠", "5♠", "6♠", "7♠", "8♠", "9♠", "10♠", "J♠", "Q♠", "K♠",
 	"A♣", "2♣", "3♣", "4♣", "5♣", "6♣", "7♣", "8♣", "9♣", "10♣", "J♣", "Q♣", "K♣",
@@ -57,7 +56,7 @@ func BlackjackCommand(s *discordgo.Session, m *discordgo.InteractionCreate, db *
 		return
 	}
 
-	var balance int
+	var balance float32
 	err := db.QueryRow("SELECT balance FROM users WHERE user_id = ?", userID).Scan(&balance)
 	if err != nil {
 		s.InteractionRespond(m.Interaction, &discordgo.InteractionResponse{
@@ -70,7 +69,7 @@ func BlackjackCommand(s *discordgo.Session, m *discordgo.InteractionCreate, db *
 		return
 	}
 
-	if bet > balance {
+	if float32(bet) > balance {
 		s.InteractionRespond(m.Interaction, &discordgo.InteractionResponse{
 			Type: discordgo.InteractionResponseChannelMessageWithSource,
 			Data: &discordgo.InteractionResponseData{
@@ -102,7 +101,33 @@ func BlackjackCommand(s *discordgo.Session, m *discordgo.InteractionCreate, db *
 
 	// Hände initialisieren
 	playerHand := []string{drawCard(&deck), drawCard(&deck)}
-	dealerHand := []string{drawCard(&deck)}
+	dealerHand := []string{drawCard(&deck), drawCard(&deck)}
+
+	// Direkt Blackjack prüfen
+	if isBlackjack(playerHand) {
+		winAmount := float32(bet) + (float32(bet) * 2.5) // 25% Bonus
+		db.Exec("UPDATE users SET balance = balance + ? WHERE user_id = ?", winAmount, userID)
+		s.InteractionRespond(m.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseChannelMessageWithSource,
+			Data: &discordgo.InteractionResponseData{
+				Title: "**Blackjack!**",
+				Content: fmt.Sprintf("Du gewinnst %.2f. Deine Karten: %s", winAmount, formatHand(playerHand)),
+			},
+		})
+		return
+	}
+
+	// Dealer hat Blackjack
+	if isBlackjack(dealerHand) {
+		s.InteractionRespond(m.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseChannelMessageWithSource,
+			Data: &discordgo.InteractionResponseData{
+				Title: "Verloren!",
+				Content: "Der Dealer hat Blackjack! Du verlierst",
+			},
+		})
+		return
+	}
 
 	// Spiel erstellen
 	game := &BlackjackGame{
@@ -118,8 +143,8 @@ func BlackjackCommand(s *discordgo.Session, m *discordgo.InteractionCreate, db *
 	// Erstelle das erste Embed
 	embed := &discordgo.MessageEmbed{
 		Title:       "Blackjack",
-		Description: fmt.Sprintf("**Deine Karten:** %s\n**Dealer:** %s, ?\n\nWähle eine Aktion:", formatHand(playerHand), dealerHand[0]),
-		Color:       0x00ff00,
+		Description: fmt.Sprintf("**Deine Karten:** %s\n**Dealer:** %s, ██\n\nWähle eine Aktion:", formatHand(playerHand), dealerHand[0]),
+		Color:       0x20633f,
 	}
 
 	// Buttons erstellen
@@ -140,11 +165,6 @@ func BlackjackCommand(s *discordgo.Session, m *discordgo.InteractionCreate, db *
 					Label:    "Double",
 					Style:    discordgo.SuccessButton,
 					CustomID: "blackjack_double",
-				},
-				discordgo.Button{
-					Label:    "Split",
-					Style:    discordgo.DangerButton,
-					CustomID: "blackjack_split",
 				},
 			},
 		},
@@ -178,4 +198,17 @@ func drawCard(deck *[]string) string {
 // Hilfsfunktion zur Formatierung der Hand
 func formatHand(hand []string) string {
 	return fmt.Sprintf("%s", hand)
+}
+
+// Prüfen auf Blackjack
+func isBlackjack(hand []string) bool {
+	if len(hand) != 2 {
+		return false
+	}
+	return (hand[0][0] == 'A' && isFaceCard(hand[1])) || (hand[1][0] == 'A' && isFaceCard(hand[0]))
+}
+
+// Prüfen, ob eine Karte eine 10er-Karte ist
+func isFaceCard(card string) bool {
+	return card[0] == 'J' || card[0] == 'Q' || card[0] == 'K' || card[:2] == "10"
 }
