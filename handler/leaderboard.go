@@ -27,12 +27,12 @@ func LeaderboardHandler(s *discordgo.Session, m *discordgo.InteractionCreate, db
 	// Daten in einer Rangliste speichern
 	leaderboard := []struct {
 		UserID  string
-		Balance int
+		Balance float64
 	}{}
 
 	for rows.Next() {
 		var userID string
-		var balance int
+		var balance float64
 		if err := rows.Scan(&userID, &balance); err != nil {
 			s.InteractionRespond(m.Interaction, &discordgo.InteractionResponse{
 				Type: discordgo.InteractionResponseChannelMessageWithSource,
@@ -44,7 +44,7 @@ func LeaderboardHandler(s *discordgo.Session, m *discordgo.InteractionCreate, db
 		}
 		leaderboard = append(leaderboard, struct {
 			UserID  string
-			Balance int
+			Balance float64
 		}{
 			UserID:  userID,
 			Balance: balance,
@@ -60,7 +60,7 @@ func LeaderboardHandler(s *discordgo.Session, m *discordgo.InteractionCreate, db
 	description := ""
 	for i, entry := range leaderboard {
 		username := fmt.Sprintf("<@%s>", entry.UserID) // Discord-Mention
-		description += fmt.Sprintf("%d. %s - %d Spielgeld\n", i+1, username, entry.Balance)
+		description += fmt.Sprintf("%d. %s - %.0f Spielgeld\n", i+1, username, entry.Balance)
 	}
 
 	// Embed erstellen

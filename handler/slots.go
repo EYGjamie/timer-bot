@@ -113,31 +113,30 @@ func convertToFixedArray(board [][]string) [3][3]string {
 	return fixedBoard
 }
 
-// Neue Berechnung der Auszahlung basierend auf den Linien und Kombinationen
 func calculatePayoutWithCombinations(board [3][3]string, bet int) (float32, []string) {
     var payout float32 = 0
-    winningLinesMap := make(map[string]bool) // Verhindert Duplikate
+    winningLinesMap := make(map[string]bool) // Verhindert Duplikate von exakt gleichen Linien (inkl. Position)
+    var winningLines []string
 
     for _, line := range lines {
         var symbols []string
+        var lineKeyParts []string
 
         for _, pos := range line {
             symbols = append(symbols, board[pos[0]][pos[1]])
+            lineKeyParts = append(lineKeyParts, fmt.Sprintf("%d-%d", pos[0], pos[1]))
         }
 
-        formattedLine := strings.Join(symbols, "")
+        lineKey := strings.Join(lineKeyParts, ",") // Eindeutiger Schlüssel für die Linie (Positionen)
+        formattedLine := strings.Join(symbols, "") // Symbole in der Linie
+
         if factor, exists := payoutFactors[formattedLine]; exists {
-            if !winningLinesMap[formattedLine] { // Prüfe, ob die Linie schon existiert
+            if !winningLinesMap[lineKey] { // Prüfen, ob die Linie bereits verarbeitet wurde
                 payout += float32(bet) * factor
-                winningLinesMap[formattedLine] = true
+                winningLinesMap[lineKey] = true
+                winningLines = append(winningLines, formattedLine) // Die Symbole der Gewinnlinie hinzufügen
             }
         }
-    }
-
-    // Konvertiere die Map in ein Array
-    var winningLines []string
-    for line := range winningLinesMap {
-        winningLines = append(winningLines, line)
     }
 
     return payout, winningLines
@@ -306,8 +305,8 @@ func SlotCommand(s *discordgo.Session, m *discordgo.InteractionCreate, db *sql.D
 
 }
 
-func GetUserBalance(db *sql.DB, userID string, guildID string) (int, error) {
-	var balance int
+func GetUserBalance(db *sql.DB, userID string, guildID string) (float64, error) {
+	var balance float64
 	err := db.QueryRow("SELECT balance FROM users WHERE user_id = ? AND guild_id = ?", userID, guildID).Scan(&balance)
 	if err == sql.ErrNoRows {
 		return 0, nil
