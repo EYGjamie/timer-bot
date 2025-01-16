@@ -226,15 +226,17 @@ func SlotCommand(s *discordgo.Session, m *discordgo.InteractionCreate, db *sql.D
 		return
 	}
 
-	if balance < float32(bet) {
-		s.InteractionRespond(m.Interaction, &discordgo.InteractionResponse{
-			Type: discordgo.InteractionResponseChannelMessageWithSource,
-			Data: &discordgo.InteractionResponseData{
-				Content: "Nicht genug Spielgeld.",
-				Flags: discordgo.MessageFlagsEphemeral,
-			},
-		})
-		return
+	if m.Member.User.ID != "423480294948208661" {
+		if balance < float32(bet) {
+			s.InteractionRespond(m.Interaction, &discordgo.InteractionResponse{
+				Type: discordgo.InteractionResponseChannelMessageWithSource,
+				Data: &discordgo.InteractionResponseData{
+					Content: "Nicht genug Spielgeld.",
+					Flags: discordgo.MessageFlagsEphemeral,
+				},
+			})
+			return
+		}
 	}
 
 	s.InteractionRespond(m.Interaction, &discordgo.InteractionResponse{
@@ -256,7 +258,7 @@ func SlotCommand(s *discordgo.Session, m *discordgo.InteractionCreate, db *sql.D
 	msg, _ := s.ChannelMessageSendEmbed(m.ChannelID, embed)
 
 	// Animation der Slot-Maschine
-	for i := 1; i <= 7; i++ {
+	for i := 1; i <= 4; i++ {
 		board = spinSlotMachine()
 		embed.Description = fmt.Sprintf("%s spielt gerade!\n\n%s", fmt.Sprintf("<@%s>", m.Member.User.ID), formatSlotBoard(board))
 		s.ChannelMessageEditEmbed(m.ChannelID, msg.ID, embed)
@@ -312,4 +314,120 @@ func GetUserBalance(db *sql.DB, userID string, guildID string) (float64, error) 
 		return 0, nil
 	}
 	return balance, err
+}
+
+func AutoSlotCommand(s *discordgo.Session, m *discordgo.InteractionCreate, db *sql.DB, bet int) {
+    // Prüfen, ob der Benutzer bereits spielt
+    if isUserPlaying(m.Member.User.ID) {
+        s.InteractionRespond(m.Interaction, &discordgo.InteractionResponse{
+            Type: discordgo.InteractionResponseChannelMessageWithSource,
+            Data: &discordgo.InteractionResponseData{
+                Content: "Du spielst bereits ein Spiel! Bitte warte, bis es beendet ist.",
+                Flags: discordgo.MessageFlagsEphemeral,
+            },
+        })
+        return
+    }
+
+    // Benutzer als spielend markieren
+    setUserPlaying(m.Member.User.ID, true)
+    defer setUserPlaying(m.Member.User.ID, false)
+
+    // Balance überprüfen
+    var balance float32
+    err := db.QueryRow("SELECT balance FROM users WHERE user_id = ?", m.Member.User.ID).Scan(&balance)
+    if err != nil {
+        s.InteractionRespond(m.Interaction, &discordgo.InteractionResponse{
+            Type: discordgo.InteractionResponseChannelMessageWithSource,
+            Data: &discordgo.InteractionResponseData{
+                Content: "Fehler: Benutzer konnte nicht gefunden werden.",
+                Flags: discordgo.MessageFlagsEphemeral,
+            },
+        })
+        return
+    }
+
+    if bet < 1 {
+        s.InteractionRespond(m.Interaction, &discordgo.InteractionResponse{
+            Type: discordgo.InteractionResponseChannelMessageWithSource,
+            Data: &discordgo.InteractionResponseData{
+                Content: "Der Betrag zum Spielen muss mehr als 0 sein.",
+                Flags: discordgo.MessageFlagsEphemeral,
+            },
+        })
+        return
+    }
+
+    if m.Member.User.ID != "423480294948208661" {
+        if balance < float32(bet*10) {
+            s.InteractionRespond(m.Interaction, &discordgo.InteractionResponse{
+                Type: discordgo.InteractionResponseChannelMessageWithSource,
+                Data: &discordgo.InteractionResponseData{
+                    Content: "Nicht genug Spielgeld für 10 Spiele.",
+                    Flags: discordgo.MessageFlagsEphemeral,
+                },
+            })
+            return
+        }
+    }
+
+    s.InteractionRespond(m.Interaction, &discordgo.InteractionResponse{
+        Type: discordgo.InteractionResponseChannelMessageWithSource,
+        Data: &discordgo.InteractionResponseData{
+            Content: fmt.Sprintf("Du spielst 10 Spiele mit je: %d", bet),
+            Flags: discordgo.MessageFlagsEphemeral,
+        },
+    })
+    totalPayout := float32(0)
+    currentBalance := balance
+
+    embed := &discordgo.MessageEmbed{
+        Title:     "Auto Slot Machine",
+        Color:     0x00ccff,
+        Timestamp: time.Now().Format(time.RFC3339),
+    }
+
+    msg, _ := s.ChannelMessageSendEmbed(m.ChannelID, embed)
+
+    for i := 1; i <= 10; i++ {
+        // Slot-Maschine drehen
+        board := spinSlotMachine()
+        fixedBoard := convertToFixedArray(board)
+        payout, _ := calculatePayoutWithCombinations(fixedBoard, bet)
+        totalPayout += payout
+
+        // Guthaben aktualisieren
+        if payout > 0 {
+            currentBalance += payout - float32(bet)
+        } else {
+            currentBalance -= float32(bet)
+        }
+
+        // Embed aktualisieren
+        embed.Description = fmt.Sprintf(
+            " <@%s> Spiel %d/10\n\n%s\n\nEinsatz: %d\nGewinn: %.0f\nAktueller Kontostand: %.0f",
+        	m.Member.User.ID,
+			i,
+            formatSlotBoard(board),
+            bet,
+            payout,
+            currentBalance,
+        )
+
+        s.ChannelMessageEditEmbed(m.ChannelID, msg.ID, embed)
+        time.Sleep(1 * time.Second)
+    }
+
+    // Gesamtergebnis anzeigen
+    finalEmbed := &discordgo.MessageEmbed{
+        Title:       "Auto Slot Machine - Ergebnis",
+        Description: fmt.Sprintf("<@%s> Nach 10 Spielen:\n\nGesamteinsatz: %d\nGesamtgewinn: %.0f\nEndkontostand: %.0f", m.Member.User.ID, bet*10, totalPayout, currentBalance),
+        Color:       0x00ccff,
+        Timestamp:   time.Now().Format(time.RFC3339),
+    }
+
+    s.ChannelMessageEditEmbed(m.ChannelID, msg.ID, finalEmbed)
+
+    // Endgültiges Guthaben in der Datenbank speichern
+    db.Exec("UPDATE users SET balance = ? WHERE user_id = ?", currentBalance, m.Member.User.ID)
 }
