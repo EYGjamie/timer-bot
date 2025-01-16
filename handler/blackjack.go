@@ -187,28 +187,3 @@ func BlackjackCommand(s *discordgo.Session, m *discordgo.InteractionCreate, db *
 	// Nachricht speichern
 	game.MessageID = m.ID
 }
-
-// Funktion zum Ziehen einer Karte
-func drawCard(deck *[]string) string {
-	card := (*deck)[0]
-	*deck = (*deck)[1:]
-	return card
-}
-
-// Hilfsfunktion zur Formatierung der Hand
-func formatHand(hand []string) string {
-	return fmt.Sprintf("%s", hand)
-}
-
-// Prüfen auf Blackjack
-func isBlackjack(hand []string) bool {
-	if len(hand) != 2 {
-		return false
-	}
-	return (hand[0][0] == 'A' && isFaceCard(hand[1])) || (hand[1][0] == 'A' && isFaceCard(hand[0]))
-}
-
-// Prüfen, ob eine Karte eine 10er-Karte ist
-func isFaceCard(card string) bool {
-	return card[0] == 'J' || card[0] == 'Q' || card[0] == 'K' || card[:2] == "10"
-}

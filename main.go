@@ -44,11 +44,13 @@ func main() {
 	dg.Identify.Intents = intents
 	
 	const ownerID = "423480294948208661"
-
 		// Event-Handler für Interaktionen
-		dg.AddHandler(func(s *discordgo.Session, m *discordgo.InteractionCreate) {
+	dg.AddHandler(func(s *discordgo.Session, m *discordgo.InteractionCreate) {
+		// Unterscheide zwischen Slash-Befehl und Button-Interaktion
+		switch m.Type {
+		case discordgo.InteractionApplicationCommand: // Slash-Befehl
 			switch m.ApplicationCommandData().Name {
-	
+
 			case "moneyall":
 				// Überprüfen, ob der Benutzer der Bot-Besitzer ist
 				if m.Member.User.ID != ownerID {
@@ -61,7 +63,7 @@ func main() {
 					})
 					return
 				}
-	
+
 				// Führe den eigentlichen Befehl aus
 				amount := m.ApplicationCommandData().Options[0].IntValue()
 				err := handler.MoneyAll(s, db, m.GuildID, int(amount))
@@ -80,7 +82,7 @@ func main() {
 						},
 					})
 				}
-	
+
 			case "moneygive":
 				// Überprüfen, ob der Benutzer der Bot-Besitzer ist
 				if m.Member.User.ID != ownerID {
@@ -93,7 +95,7 @@ func main() {
 					})
 					return
 				}
-	
+
 				// Führe den eigentlichen Befehl aus
 				userID := m.ApplicationCommandData().Options[0].UserValue(nil).ID
 				amount := m.ApplicationCommandData().Options[1].IntValue()
@@ -113,11 +115,11 @@ func main() {
 						},
 					})
 				}
-	
+
 			case "slot":
 				bet := m.ApplicationCommandData().Options[0].IntValue()
 				handler.SlotCommand(s, m, db, int(bet))
-	
+
 			case "money":
 				// Aktuelles Spielgeld des Benutzers abrufen
 				balance, err := handler.GetUserBalance(db, m.Member.User.ID, m.GuildID)
@@ -130,40 +132,47 @@ func main() {
 					})
 					return
 				}
-	
+
 				// Antwort mit dem Guthaben senden
 				s.InteractionRespond(m.Interaction, &discordgo.InteractionResponse{
 					Type: discordgo.InteractionResponseChannelMessageWithSource,
 					Data: &discordgo.InteractionResponseData{
-						Content: fmt.Sprintf("Du hast aktuell %.0f Spielgeld.", balance),
+						Content: fmt.Sprintf("Du hast aktuell %.0f Müller Coins.", balance),
 					},
 				})
 
 			case "leaderboard":
 				// Aufruf des Leaderboard-Handlers
-				handler.LeaderboardHandler(s, m, db)	
+				handler.LeaderboardHandler(s, m, db)
 
 			case "blackjack":
 				// Einsatz aus den Befehlsoptionen extrahieren
 				bet := int(m.ApplicationCommandData().Options[0].IntValue())
 				handler.BlackjackCommand(s, m, db, bet)
+			
+			case "autoslot":
+				bet := m.ApplicationCommandData().Options[0].IntValue()
+				handler.AutoSlotCommand(s, m, db, int(bet))
 
 			}
 
-				// Button-Interaktionen
-		if m.Type == discordgo.InteractionMessageComponent {
+		case discordgo.InteractionMessageComponent: // Button-Interaktionen
 			switch m.MessageComponentData().CustomID {
 			case "blackjack_hit":
-				// Logik für "Hit" implementieren
+				handler.BlackjackHit(s, m, db)
 			case "blackjack_stay":
-				// Logik für "Stay" implementieren
+				handler.BlackjackStay(s, m, db)
 			case "blackjack_double":
-				// Logik für "Double" implementieren
+				handler.BlackjackDouble(s, m, db)
+			default:
+				fmt.Println("Unbekannter Button:", m.MessageComponentData().CustomID)
 			}
+
+		default:
+			// Ignoriere unbekannte Interaktionstypen
+			fmt.Printf("Unbekannter Interaktionstyp: %v\n", m.Type)
 		}
-		})
-
-
+	})
 
 	// Bot starten
 	err = dg.Open()
@@ -286,6 +295,22 @@ func main() {
 	})
 	if err != nil {
 		log.Fatalf("Fehler beim Registrieren des /blackjack-Befehls: %v", err)
+	}
+
+	_, err = dg.ApplicationCommandCreate(dg.State.User.ID, "", &discordgo.ApplicationCommand{
+		Name:        "autoslot",
+		Description: "Spiele 10 Runden Slot-Maschine mit deinem Einsatz",
+		Options: []*discordgo.ApplicationCommandOption{
+			{
+				Type:        discordgo.ApplicationCommandOptionInteger,
+				Name:        "bet",
+				Description: "Der Einsatz für jede Runde",
+				Required:    true,
+			},
+		},
+	})
+	if err != nil {
+		log.Fatalf("Fehler beim Registrieren des Commands: %v", err)
 	}
 
 	// handler.StartLectureTimer(dg)
