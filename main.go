@@ -313,8 +313,8 @@ func main() {
 		log.Fatalf("Fehler beim Registrieren des Commands: %v", err)
 	}
 
-	// handler.StartLectureTimer(dg)
-	// handler.StartProgressUpdater(dg)
+	handler.StartLectureTimer(dg)
+	handler.StartProgressUpdater(dg)
 
 	log.Println("Bot läuft. Drücke STRG+C zum Beenden.")
 
