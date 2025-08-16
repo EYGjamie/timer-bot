@@ -1,48 +1,15 @@
-# Multi-stage build für kleinere Image-Größe
-FROM golang:1.23-alpine AS builder
-
-# Build-Tools installieren (für SQLite/CGO)
-RUN apk add --no-cache \
-    gcc \
-    musl-dev \
-    sqlite-dev
-
-# Arbeitsverzeichnis setzen
+FROM golang:1.23-ubuntu AS builder
 WORKDIR /app
-
-# Abhängigkeiten kopieren und herunterladen
 COPY go.mod go.sum ./
 RUN go mod download
-
-# Quellcode kopieren
 COPY . .
+RUN CGO_ENABLED=1 go build -o discord-bot .
 
-# Binary kompilieren (statisch gelinkt für Alpine)
-RUN CGO_ENABLED=1 GOOS=linux go build -a -installsuffix cgo -o discord-bot .
-
-# Finales Image
-FROM alpine:latest
-
-# Notwendige Pakete installieren
-RUN apk --no-cache add ca-certificates tzdata
-
-# Arbeitsverzeichnis erstellen
+FROM ubuntu:22.04
+RUN apt-get update && apt-get install -y ca-certificates tzdata && rm -rf /var/lib/apt/lists/*
 WORKDIR /root/
-
-# Binary aus dem Builder-Stage kopieren
 COPY --from=builder /app/discord-bot .
-
-# Datenbank-Verzeichnis erstellen
 RUN mkdir -p /data
-
-# Volume für persistente Daten
 VOLUME ["/data"]
-
-# Port (falls der Bot später einen HTTP-Server braucht)
-# EXPOSE 8080
-
-# Umgebungsvariablen
 ENV DATABASE_PATH=/data/users.db
-
-# Bot starten
 CMD ["./discord-bot"]
