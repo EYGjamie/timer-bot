@@ -1,6 +1,12 @@
 # Multi-stage build für kleinere Image-Größe
 FROM golang:1.23-alpine AS builder
 
+# Build-Tools installieren (für SQLite/CGO)
+RUN apk add --no-cache \
+    gcc \
+    musl-dev \
+    sqlite-dev
+
 # Arbeitsverzeichnis setzen
 WORKDIR /app
 
