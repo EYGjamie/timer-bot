@@ -1,0 +1,16 @@
+services:
+  discord-bot:
+    build: .
+    container_name: discord-bot-go
+    restart: unless-stopped
+    volumes:
+      - ./data:/data  # Persistente Speicherung der SQLite-Datenbank
+      - ./.env:/root/.env:ro  # .env Datei einbinden (read-only)
+    environment:
+      - TZ=Europe/Berlin  # Zeitzone setzen
+    # Logging konfigurieren
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	"github.com/bwmarrin/discordgo"
@@ -14,6 +15,40 @@ import (
 
 	"discord-bot-go/handler"
 )
+
+func initDatabase(db *sql.DB) error {
+	// Tabellen erstellen falls sie nicht existieren
+	createUsersTable := `
+	CREATE TABLE IF NOT EXISTS users (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		user_id TEXT NOT NULL,
+		guild_id TEXT NOT NULL,
+		balance REAL DEFAULT 1000,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		UNIQUE(user_id, guild_id)
+	);`
+
+	_, err := db.Exec(createUsersTable)
+	if err != nil {
+		return fmt.Errorf("fehler beim Erstellen der users-Tabelle: %v", err)
+	}
+
+	// Indizes erstellen
+	createIndexes := []string{
+		"CREATE INDEX IF NOT EXISTS idx_users_user_guild ON users(user_id, guild_id);",
+		"CREATE INDEX IF NOT EXISTS idx_users_balance ON users(balance DESC);",
+	}
+
+	for _, indexSQL := range createIndexes {
+		_, err := db.Exec(indexSQL)
+		if err != nil {
+			log.Printf("Warnung: Fehler beim Erstellen eines Index: %v", err)
+		}
+	}
+
+	return nil
+}
 
 func main() {
 	// .env Datei laden
@@ -25,15 +60,32 @@ func main() {
 	// Token aus der .env Datei lesen
 	token := os.Getenv("TOKEN")
 	if token == "" {
-		log.Fatal("DISCORD_BOT_TOKEN ist nicht definiert.")
+		log.Fatal("TOKEN ist nicht definiert.")
+	}
+
+	// Datenbankpfad für Docker Container
+	dbPath := os.Getenv("DATABASE_PATH")
+	if dbPath == "" {
+		dbPath = "./users.db" // Fallback für lokale Entwicklung
+	}
+
+	// Sicherstellen, dass das Verzeichnis existiert
+	dbDir := filepath.Dir(dbPath)
+	if err := os.MkdirAll(dbDir, 0755); err != nil {
+		log.Fatalf("Fehler beim Erstellen des Datenbankverzeichnisses: %v", err)
 	}
 
 	// Datenbankverbindung herstellen
-	db, err := sql.Open("sqlite", "./users.db")
+	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		log.Fatalf("Fehler beim Öffnen der Datenbank: %v", err)
 	}
 	defer db.Close()
+
+	// Datenbank initialisieren
+	if err := initDatabase(db); err != nil {
+		log.Fatalf("Fehler bei der Datenbankinitialisierung: %v", err)
+	}
 
 	// Discord-Session mit Intents erstellen
 	intents := discordgo.IntentsGuilds | discordgo.IntentsGuildMessages | discordgo.IntentsGuildMembers

@@ -1,0 +1,36 @@
+# Git
+.git
+.gitignore
+
+# Docker
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# Entwicklung
+*.md
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+# Datenbank (wird im Container neu erstellt)
+*.db
+*.db-shm
+*.db-wal
+
+# Binaries
+discord-bot
+discord-bot.exe
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Backup files
+*.bak
+*.backup
+
+# Data directory
+data/
