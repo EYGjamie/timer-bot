@@ -1,4 +1,4 @@
-package handler
+package leaderboard
 
 import (
 	"database/sql"

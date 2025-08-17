@@ -1,4 +1,4 @@
-package handler
+package slots
 
 import (
 	"database/sql"

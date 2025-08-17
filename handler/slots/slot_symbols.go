@@ -1,4 +1,4 @@
-package handler
+package slots
 
 var (
 	symbols = []string{"❌", "❓", "🍒", "🍋", "🍊", "🍇", "⭐", "💎", "💰"}
