@@ -22,8 +22,7 @@ require (
 require (
 	github.com/gorilla/websocket v1.4.2 // indirect
 	github.com/joho/godotenv v1.5.1
-	github.com/mattn/go-sqlite3 v1.14.24
+	github.com/lib/pq v1.10.9
 	golang.org/x/crypto v0.0.0-20210421170649-83a5a9bb288b // indirect
 	golang.org/x/sys v0.22.0 // indirect
-	modernc.org/sqlite v1.34.4
 )

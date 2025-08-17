@@ -3,7 +3,6 @@
 .gitignore
 
 # Docker
-Dockerfile
 docker-compose.yml
 .dockerignore
 
@@ -15,10 +14,15 @@ docker-compose.yml
 # Logs
 *.log
 
-# Datenbank (wird im Container neu erstellt)
+# SQLite Dateien (nicht mehr benötigt)
 *.db
 *.db-shm
 *.db-wal
+
+# PostgreSQL Dateien (werden vom Service verwaltet)
+postgres_data/
+*.dump
+*.sql.backup
 
 # Binaries
 discord-bot
@@ -32,5 +36,26 @@ Thumbs.db
 *.bak
 *.backup
 
-# Data directory
+# Environment (außer Example)
+.env
+!.env.example
+
+# Data directory (jetzt PostgreSQL Volume)
 data/
+
+# Test files
+test/
+*_test.go
+
+# IDE
+.vscode/
+.idea/
+
+# NPM (falls vorhanden)
+node_modules/
+package-lock.json
+
+# Temporary files
+*.tmp
+*.temp
+.cache/

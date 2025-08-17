@@ -6,26 +6,89 @@ import (
 	"log"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"syscall"
+	"time"
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/joho/godotenv"
-	_ "modernc.org/sqlite"
+	_ "github.com/lib/pq"
 
 	"discord-bot-go/handler"
 )
+
+func getPostgreSQLConnectionString() string {
+	host := os.Getenv("DB_HOST")
+	if host == "" {
+		host = "postgres"
+	}
+	
+	port := os.Getenv("DB_PORT")
+	if port == "" {
+		port = "5432"
+	}
+	
+	user := os.Getenv("DB_USER")
+	if user == "" {
+		user = "discord_bot"
+	}
+	
+	password := os.Getenv("DB_PASSWORD")
+	if password == "" {
+		password = "discord_password"
+	}
+	
+	dbname := os.Getenv("DB_NAME")
+	if dbname == "" {
+		dbname = "discord_bot"
+	}
+	
+	sslmode := os.Getenv("DB_SSLMODE")
+	if sslmode == "" {
+		sslmode = "disable"
+	}
+	
+	return fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
+		host, port, user, password, dbname, sslmode)
+}
+
+func waitForDatabase(connStr string) (*sql.DB, error) {
+	var db *sql.DB
+	var err error
+	
+	maxRetries := 30
+	for i := 0; i < maxRetries; i++ {
+		db, err = sql.Open("postgres", connStr)
+		if err != nil {
+			log.Printf("Versuch %d: Fehler beim Öffnen der Datenbankverbindung: %v", i+1, err)
+			time.Sleep(2 * time.Second)
+			continue
+		}
+		
+		err = db.Ping()
+		if err != nil {
+			log.Printf("Versuch %d: Datenbank nicht erreichbar: %v", i+1, err)
+			db.Close()
+			time.Sleep(2 * time.Second)
+			continue
+		}
+		
+		log.Println("Datenbankverbindung erfolgreich hergestellt!")
+		return db, nil
+	}
+	
+	return nil, fmt.Errorf("konnte nach %d Versuchen keine Verbindung zur Datenbank herstellen: %v", maxRetries, err)
+}
 
 func initDatabase(db *sql.DB) error {
 	// Tabellen erstellen falls sie nicht existieren
 	createUsersTable := `
 	CREATE TABLE IF NOT EXISTS users (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		id SERIAL PRIMARY KEY,
 		user_id TEXT NOT NULL,
 		guild_id TEXT NOT NULL,
 		balance REAL DEFAULT 1000,
-		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		UNIQUE(user_id, guild_id)
 	);`
 
@@ -47,6 +110,27 @@ func initDatabase(db *sql.DB) error {
 		}
 	}
 
+	// Update Trigger für updated_at erstellen
+	createTrigger := `
+	CREATE OR REPLACE FUNCTION update_updated_at_column()
+	RETURNS TRIGGER AS $$
+	BEGIN
+		NEW.updated_at = CURRENT_TIMESTAMP;
+		RETURN NEW;
+	END;
+	$$ language 'plpgsql';
+
+	DROP TRIGGER IF EXISTS update_users_updated_at ON users;
+	CREATE TRIGGER update_users_updated_at 
+		BEFORE UPDATE ON users 
+		FOR EACH ROW 
+		EXECUTE FUNCTION update_updated_at_column();`
+
+	_, err = db.Exec(createTrigger)
+	if err != nil {
+		log.Printf("Warnung: Fehler beim Erstellen des Update-Triggers: %v", err)
+	}
+
 	return nil
 }
 
@@ -54,7 +138,7 @@ func main() {
 	// .env Datei laden
 	err := godotenv.Load()
 	if err != nil {
-		log.Fatal("Fehler beim Laden der .env Datei:", err)
+		log.Printf("Warnung: Fehler beim Laden der .env Datei: %v", err)
 	}
 
 	// Token aus der .env Datei lesen
@@ -63,24 +147,25 @@ func main() {
 		log.Fatal("TOKEN ist nicht definiert.")
 	}
 
-	// Datenbankpfad für Docker Container
-	dbPath := os.Getenv("DATABASE_PATH")
-	if dbPath == "" {
-		dbPath = "./users.db" // Fallback für lokale Entwicklung
-	}
+	// PostgreSQL Verbindungsstring erstellen
+	connStr := getPostgreSQLConnectionString()
+	log.Printf("Verbinde mit PostgreSQL: %s", 
+		fmt.Sprintf("host=%s port=%s user=%s dbname=%s sslmode=%s",
+			os.Getenv("DB_HOST"), os.Getenv("DB_PORT"), 
+			os.Getenv("DB_USER"), os.Getenv("DB_NAME"), 
+			os.Getenv("DB_SSLMODE")))
 
-	// Sicherstellen, dass das Verzeichnis existiert
-	dbDir := filepath.Dir(dbPath)
-	if err := os.MkdirAll(dbDir, 0755); err != nil {
-		log.Fatalf("Fehler beim Erstellen des Datenbankverzeichnisses: %v", err)
-	}
-
-	// Datenbankverbindung herstellen
-	db, err := sql.Open("sqlite", dbPath)
+	// Datenbankverbindung herstellen (mit Retry-Logik)
+	db, err := waitForDatabase(connStr)
 	if err != nil {
-		log.Fatalf("Fehler beim Öffnen der Datenbank: %v", err)
+		log.Fatalf("Fehler bei der Datenbankverbindung: %v", err)
 	}
 	defer db.Close()
+
+	// Connection Pool konfigurieren
+	db.SetMaxOpenConns(25)
+	db.SetMaxIdleConns(10)
+	db.SetConnMaxLifetime(5 * time.Minute)
 
 	// Datenbank initialisieren
 	if err := initDatabase(db); err != nil {

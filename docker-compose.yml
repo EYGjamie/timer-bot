@@ -1,16 +1,55 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: discord-bot-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: discord_bot
+      POSTGRES_USER: discord_bot
+      POSTGRES_PASSWORD: discord_password
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --lc-collate=C --lc-ctype=C"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U discord_bot -d discord_bot"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - discord-bot-network
+
   discord-bot:
     build: .
     container_name: discord-bot-go
     restart: unless-stopped
-    volumes:
-      - ./data:/data  # Persistente Speicherung der SQLite-Datenbank
-      - ./.env:/root/.env:ro  # .env Datei einbinden (read-only)
+    depends_on:
+      postgres:
+        condition: service_healthy
     environment:
-      - TZ=Europe/Berlin  # Zeitzone setzen
-    # Logging konfigurieren
+      - TZ=Europe/Berlin
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USER=discord_bot
+      - DB_PASSWORD=discord_password
+      - DB_NAME=discord_bot
+      - DB_SSLMODE=disable
+    env_file:
+      - .env
+    networks:
+      - discord-bot-network
     logging:
       driver: "json-file"
       options:
         max-size: "10m"
         max-file: "3"
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  discord-bot-network:
+    driver: bridge
