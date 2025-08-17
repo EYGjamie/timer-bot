@@ -1,49 +1,41 @@
-FROM golang:1.23-ubuntu AS builder
-
-# Installiere notwendige Abhängigkeiten
-RUN apt-get update && apt-get install -y \
-    gcc \
-    musl-dev \
-    postgresql-client \
-    && rm -rf /var/lib/apt/lists/*
+# ---- Build-Stage ----
+ARG GO_VERSION=1.23.4
+FROM golang:${GO_VERSION}-bookworm AS build
 
 WORKDIR /app
 
-# Go Module Dependencies
+# Go-Module zuerst für Cache
 COPY go.mod go.sum ./
 RUN go mod download
 
-# Source Code kopieren und kompilieren
+# Quellcode
 COPY . .
-RUN CGO_ENABLED=1 GOOS=linux go build -a -installsuffix cgo -o discord-bot .
 
-FROM ubuntu:22.04
+# Für Postgres kein CGO nötig
+ENV CGO_ENABLED=0
+# Baue Binary (Passe ggf. das Target an, falls dein main in ./cmd/... liegt)
+RUN go build -trimpath -ldflags="-s -w" -o /out/timer-bot .
 
-# Installiere notwendige Runtime Dependencies
-RUN apt-get update && apt-get install -y \
-    ca-certificates \
-    tzdata \
-    postgresql-client \
-    && rm -rf /var/lib/apt/lists/*
+# ---- Runtime-Stage ----
+FROM debian:bookworm-slim
 
-WORKDIR /root/
+# Runtime-Pakete: Zertifikate + Zeitzone
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ca-certificates tzdata \
+  && rm -rf /var/lib/apt/lists/*
 
-# Binary und Config Files kopieren
-COPY --from=builder /app/discord-bot .
+ENV TZ=Europe/Berlin
+WORKDIR /app
 
-# Erstelle Verzeichnis für Logs (falls benötigt)
-RUN mkdir -p /var/log/discord-bot
+# Unprivilegierter User
+RUN useradd -r -u 10001 app
+USER app
 
-# Health Check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD pgrep discord-bot || exit 1
+# Binary kopieren
+COPY --from=build /out/timer-bot /usr/local/bin/timer-bot
 
-# Standard Umgebungsvariablen
-ENV DB_HOST=postgres \
-    DB_PORT=5432 \
-    DB_USER=discord_bot \
-    DB_NAME=discord_bot \
-    DB_SSLMODE=disable \
-    TZ=Europe/Berlin
+# Diese ENV-Variablen werden von docker-compose übergeben
+# TOKEN, DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME, DB_SSLMODE, TZ, DEBUG
 
-CMD ["./discord-bot"]
+ENTRYPOINT ["/usr/local/bin/timer-bot"]
+
