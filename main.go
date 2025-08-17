@@ -18,7 +18,6 @@ import (
 	"discord-bot-go/handler/slots"
 )
 
-
 func main() {
 	err := godotenv.Load()
 	if err != nil {
@@ -35,7 +34,7 @@ func main() {
 	connStr := database.GetPostgreSQLConnectionString()
 
 	// Datenbankverbindung herstellen (mit Retry-Logik)
-	log.Printf("Verbinde mit Postgre DB")
+	log.Printf("Verbinde mit PostgreSQL Datenbank...")
 	db, err := database.WaitForDatabase(connStr)
 	if err != nil {
 		log.Fatalf("Fehler bei der Datenbankverbindung: %v", err)
@@ -51,6 +50,8 @@ func main() {
 	if err := database.InitDatabase(db); err != nil {
 		log.Fatalf("Fehler bei der Datenbankinitialisierung: %v", err)
 	}
+
+	log.Println("✅ PostgreSQL Datenbank erfolgreich initialisiert!")
 
 	// Discord-Session mit Intents erstellen
 	intents := discordgo.IntentsGuilds | discordgo.IntentsGuildMessages | discordgo.IntentsGuildMembers
@@ -83,17 +84,19 @@ func main() {
 				amount := m.ApplicationCommandData().Options[0].IntValue()
 				err := slots.MoneyAll(s, db, m.GuildID, int(amount))
 				if err != nil {
+					log.Printf("Fehler bei MoneyAll: %v", err)
 					s.InteractionRespond(m.Interaction, &discordgo.InteractionResponse{
 						Type: discordgo.InteractionResponseChannelMessageWithSource,
 						Data: &discordgo.InteractionResponseData{
 							Content: fmt.Sprintf("Fehler: %v", err),
+							Flags:   discordgo.MessageFlagsEphemeral,
 						},
 					})
 				} else {
 					s.InteractionRespond(m.Interaction, &discordgo.InteractionResponse{
 						Type: discordgo.InteractionResponseChannelMessageWithSource,
 						Data: &discordgo.InteractionResponseData{
-							Content: "Allen Mitgliedern wurden Spielgeld hinzugefügt!",
+							Content: fmt.Sprintf("Allen Mitgliedern wurde das Guthaben auf %d Müller Coins gesetzt!", amount),
 						},
 					})
 				}
@@ -113,19 +116,21 @@ func main() {
 				// Führe den eigentlichen Befehl aus
 				userID := m.ApplicationCommandData().Options[0].UserValue(nil).ID
 				amount := m.ApplicationCommandData().Options[1].IntValue()
-				err := slots.MoneyGive(db, userID, int(amount))
+				err := slots.MoneyGive(db, userID, m.GuildID, int(amount))
 				if err != nil {
+					log.Printf("Fehler bei MoneyGive: %v", err)
 					s.InteractionRespond(m.Interaction, &discordgo.InteractionResponse{
 						Type: discordgo.InteractionResponseChannelMessageWithSource,
 						Data: &discordgo.InteractionResponseData{
 							Content: "Fehler beim Hinzufügen von Spielgeld.",
+							Flags:   discordgo.MessageFlagsEphemeral,
 						},
 					})
 				} else {
 					s.InteractionRespond(m.Interaction, &discordgo.InteractionResponse{
 						Type: discordgo.InteractionResponseChannelMessageWithSource,
 						Data: &discordgo.InteractionResponseData{
-							Content: fmt.Sprintf("%d Spielgeld wurden Benutzer <@%s> hinzugefügt.", amount, userID),
+							Content: fmt.Sprintf("%d Müller Coins wurden Benutzer <@%s> hinzugefügt.", amount, userID),
 						},
 					})
 				}
@@ -138,10 +143,12 @@ func main() {
 				// Aktuelles Spielgeld des Benutzers abrufen
 				balance, err := slots.GetUserBalance(db, m.Member.User.ID, m.GuildID)
 				if err != nil {
+					log.Printf("Fehler bei GetUserBalance: %v", err)
 					s.InteractionRespond(m.Interaction, &discordgo.InteractionResponse{
 						Type: discordgo.InteractionResponseChannelMessageWithSource,
 						Data: &discordgo.InteractionResponseData{
 							Content: "Fehler beim Abrufen deines Guthabens. Bitte versuche es später erneut.",
+							Flags:   discordgo.MessageFlagsEphemeral,
 						},
 					})
 					return
@@ -152,6 +159,7 @@ func main() {
 					Type: discordgo.InteractionResponseChannelMessageWithSource,
 					Data: &discordgo.InteractionResponseData{
 						Content: fmt.Sprintf("Du hast aktuell %.0f Müller Coins.", balance),
+						Flags:   discordgo.MessageFlagsEphemeral,
 					},
 				})
 
@@ -163,10 +171,12 @@ func main() {
 				bet := m.ApplicationCommandData().Options[0].IntValue()
 				slots.AutoSlotCommand(s, m, db, int(bet))
 
+			default:
+				log.Printf("Unbekannter Befehl: %s", m.ApplicationCommandData().Name)
 			}
 
 		default:
-			fmt.Printf("Unbekannter Interaktionstyp: %v\n", m.Type)
+			log.Printf("Unbekannter Interaktionstyp: %v", m.Type)
 		}
 	})
 
@@ -181,40 +191,51 @@ func main() {
 		log.Fatal("Bot-User konnte nicht initialisiert werden. Prüfe den Token.")
 	}
 
+	log.Printf("✅ Bot gestartet als: %s#%s", dg.State.User.Username, dg.State.User.Discriminator)
+
 	// Alte globale Befehle löschen
+	log.Println("Lösche alte globale Befehle...")
 	globalCommands, err := dg.ApplicationCommands(dg.State.User.ID, "")
 	if err != nil {
-		log.Fatalf("Fehler beim Abrufen der globalen Befehle: %v", err)
-	}
-	for _, cmd := range globalCommands {
-		err := dg.ApplicationCommandDelete(dg.State.User.ID, "", cmd.ID)
-		if err != nil {
-			log.Printf("Fehler beim Löschen des globalen Befehls %s: %v", cmd.Name, err)
+		log.Printf("Warnung: Fehler beim Abrufen der globalen Befehle: %v", err)
+	} else {
+		for _, cmd := range globalCommands {
+			err := dg.ApplicationCommandDelete(dg.State.User.ID, "", cmd.ID)
+			if err != nil {
+				log.Printf("Fehler beim Löschen des globalen Befehls %s: %v", cmd.Name, err)
+			} else {
+				log.Printf("Globaler Befehl gelöscht: %s", cmd.Name)
+			}
 		}
 	}
 
 	// Alte server-spezifische Befehle löschen
+	log.Println("Lösche alte server-spezifische Befehle...")
 	guildCommands, err := dg.ApplicationCommands(dg.State.User.ID, "1181238521734901770")
 	if err != nil {
-		log.Fatalf("Fehler beim Abrufen der server-spezifischen Befehle: %v", err)
-	}
-	for _, cmd := range guildCommands {
-		err := dg.ApplicationCommandDelete(dg.State.User.ID, "1181238521734901770", cmd.ID)
-		if err != nil {
-			log.Printf("Fehler beim Löschen des server-spezifischen Befehls %s: %v", cmd.Name, err)
+		log.Printf("Warnung: Fehler beim Abrufen der server-spezifischen Befehle: %v", err)
+	} else {
+		for _, cmd := range guildCommands {
+			err := dg.ApplicationCommandDelete(dg.State.User.ID, "1181238521734901770", cmd.ID)
+			if err != nil {
+				log.Printf("Fehler beim Löschen des server-spezifischen Befehls %s: %v", cmd.Name, err)
+			} else {
+				log.Printf("Server-spezifischer Befehl gelöscht: %s", cmd.Name)
+			}
 		}
 	}
 
+	// Neue Slash-Befehle registrieren
+	log.Println("Registriere neue Slash-Befehle...")
 
-	// Slash-Befehle registrieren
 	_, err = dg.ApplicationCommandCreate(dg.State.User.ID, "1181238521734901770", &discordgo.ApplicationCommand{
 		Name:        "moneyall",
-		Description: "Fügt allen Benutzern Spielgeld hinzu",
+		Description: "Setzt das Guthaben aller Benutzer auf einen bestimmten Betrag",
 		Options: []*discordgo.ApplicationCommandOption{
 			{
 				Type:        discordgo.ApplicationCommandOptionInteger,
 				Name:        "betrag",
-				Description: "Betrag an Spielgeld",
+				Description: "Neuer Guthabenbetrag für alle Benutzer",
 				Required:    true,
 			},
 		},
@@ -236,7 +257,7 @@ func main() {
 			{
 				Type:        discordgo.ApplicationCommandOptionInteger,
 				Name:        "betrag",
-				Description: "Betrag an Spielgeld",
+				Description: "Betrag an Spielgeld der hinzugefügt wird",
 				Required:    true,
 			},
 		},
@@ -245,15 +266,16 @@ func main() {
 		log.Fatalf("Fehler beim Registrieren von /moneygive: %v", err)
 	}
 
-	_, err = dg.ApplicationCommandCreate(dg.State.User.ID, "1181238521734901770", &discordgo.ApplicationCommand{
+	_, err = dg.ApplicationCommandCreate(dg.State.User.ID, "", &discordgo.ApplicationCommand{
 		Name:        "slot",
 		Description: "Spiele an der Slotmachine",
 		Options: []*discordgo.ApplicationCommandOption{
 			{
 				Type:        discordgo.ApplicationCommandOptionInteger,
 				Name:        "einsatz",
-				Description: "Einsatz für die Slotmachine",
+				Description: "Einsatz für die Slotmachine (Mindestens 1)",
 				Required:    true,
+				MinValue:    &[]float64{1}[0],
 			},
 		},
 	})
@@ -261,7 +283,7 @@ func main() {
 		log.Fatalf("Fehler beim Registrieren von /slot: %v", err)
 	}
 
-	_, err = dg.ApplicationCommandCreate(dg.State.User.ID, "1181238521734901770", &discordgo.ApplicationCommand{
+	_, err = dg.ApplicationCommandCreate(dg.State.User.ID, "", &discordgo.ApplicationCommand{
 		Name:        "money",
 		Description: "Zeigt dir dein aktuelles Spielgeld an",
 	})
@@ -269,7 +291,7 @@ func main() {
 		log.Fatalf("Fehler beim Registrieren von /money: %v", err)
 	}
 
-	_, err = dg.ApplicationCommandCreate(dg.State.User.ID, "1181238521734901770", &discordgo.ApplicationCommand{
+	_, err = dg.ApplicationCommandCreate(dg.State.User.ID, "", &discordgo.ApplicationCommand{
 		Name:        "leaderboard",
 		Description: "Zeigt die Rangliste der Spieler mit dem meisten Spielgeld an",
 	})
@@ -278,46 +300,37 @@ func main() {
 	}
 
 	_, err = dg.ApplicationCommandCreate(dg.State.User.ID, "", &discordgo.ApplicationCommand{
-		Name:        "blackjack",
-		Description: "Spiele eine Runde Blackjack",
+		Name:        "autoslot",
+		Description: "Spiele 10 Runden Slot-Maschine automatisch",
 		Options: []*discordgo.ApplicationCommandOption{
 			{
 				Type:        discordgo.ApplicationCommandOptionInteger,
 				Name:        "einsatz",
-				Description: "Der Betrag, den du setzen möchtest",
+				Description: "Der Einsatz pro Runde (Mindestens 1)",
 				Required:    true,
+				MinValue:    &[]float64{1}[0],
 			},
 		},
 	})
 	if err != nil {
-		log.Fatalf("Fehler beim Registrieren des /blackjack-Befehls: %v", err)
+		log.Fatalf("Fehler beim Registrieren von /autoslot: %v", err)
 	}
 
-	_, err = dg.ApplicationCommandCreate(dg.State.User.ID, "", &discordgo.ApplicationCommand{
-		Name:        "autoslot",
-		Description: "Spiele 10 Runden Slot-Maschine mit deinem Einsatz",
-		Options: []*discordgo.ApplicationCommandOption{
-			{
-				Type:        discordgo.ApplicationCommandOptionInteger,
-				Name:        "bet",
-				Description: "Der Einsatz für jede Runde",
-				Required:    true,
-			},
-		},
-	})
-	if err != nil {
-		log.Fatalf("Fehler beim Registrieren des Commands: %v", err)
-	}
+	log.Println("✅ Alle Slash-Befehle erfolgreich registriert!")
 
+	// Timer starten
+	log.Println("Starte Timer...")
 	timer.StartLectureTimer(dg)
 	timer.StartProgressUpdater(dg)
 
-	log.Println("Bot läuft. Drücke STRG+C zum Beenden.")
+	log.Println("🎉 Bot läuft erfolgreich! Drücke STRG+C zum Beenden.")
 
+	// Graceful Shutdown
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
 	<-stop
 
-	log.Println("Bot wird gestoppt.")
+	log.Println("🛑 Bot wird gestoppt...")
 	dg.Close()
+	log.Println("✅ Bot erfolgreich gestoppt.")
 }

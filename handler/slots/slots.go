@@ -23,7 +23,7 @@ var (
 	}
 )
 
-var activePlayers = make(map[string]bool) // Speichert den Status, ob ein Benutzer spielt
+var activePlayers = make(map[string]bool)
 
 func isUserPlaying(userID string) bool {
 	// Überprüft, ob der Benutzer gerade spielt
@@ -39,7 +39,6 @@ func setUserPlaying(userID string, playing bool) {
 		delete(activePlayers, userID)
 	}
 }
-
 
 func init() {
 	rand.Seed(time.Now().UnixNano())
@@ -84,8 +83,6 @@ func spinSlotMachine() [][]string {
 	return newBoard
 }
 
-
-
 // Slot-Board als String formatieren
 func formatSlotBoard(board [][]string) string {
 	lines := ""
@@ -115,7 +112,7 @@ func convertToFixedArray(board [][]string) [3][3]string {
 
 func calculatePayoutWithCombinations(board [3][3]string, bet int) (float32, []string) {
     var payout float32 = 0
-    winningLinesMap := make(map[string]bool) // Verhindert Duplikate von exakt gleichen Linien (inkl. Position)
+    winningLinesMap := make(map[string]bool)
     var winningLines []string
 
     for _, line := range lines {
@@ -127,22 +124,20 @@ func calculatePayoutWithCombinations(board [3][3]string, bet int) (float32, []st
             lineKeyParts = append(lineKeyParts, fmt.Sprintf("%d-%d", pos[0], pos[1]))
         }
 
-        lineKey := strings.Join(lineKeyParts, ",") // Eindeutiger Schlüssel für die Linie (Positionen)
-        formattedLine := strings.Join(symbols, "") // Symbole in der Linie
+        lineKey := strings.Join(lineKeyParts, ",")
+        formattedLine := strings.Join(symbols, "")
 
         if factor, exists := payoutFactors[formattedLine]; exists {
-            if !winningLinesMap[lineKey] { // Prüfen, ob die Linie bereits verarbeitet wurde
+            if !winningLinesMap[lineKey] {
                 payout += float32(bet) * factor
                 winningLinesMap[lineKey] = true
-                winningLines = append(winningLines, formattedLine) // Die Symbole der Gewinnlinie hinzufügen
+                winningLines = append(winningLines, formattedLine)
             }
         }
     }
 
     return payout, winningLines
 }
-
-
 
 func MoneyAll(s *discordgo.Session, db *sql.DB, guildID string, amount int) error {
 	// Alle Mitglieder der Gilde abfragen
@@ -156,20 +151,20 @@ func MoneyAll(s *discordgo.Session, db *sql.DB, guildID string, amount int) erro
 
 		// Überprüfen, ob der Benutzer bereits in der Datenbank existiert
 		var exists bool
-		err := db.QueryRow("SELECT EXISTS(SELECT 1 FROM users WHERE user_id = ? AND guild_id = ?)", userID, guildID).Scan(&exists)
+		err := db.QueryRow("SELECT EXISTS(SELECT 1 FROM users WHERE user_id = $1 AND guild_id = $2)", userID, guildID).Scan(&exists)
 		if err != nil {
 			return fmt.Errorf("fehler beim Überprüfen der Datenbank: %v", err)
 		}
 
 		if exists {
-			// Wenn der Benutzer existiert, füge den Betrag hinzu
-			_, err := db.Exec("UPDATE users SET balance = ? WHERE user_id = ? AND guild_id = ?", amount, userID, guildID)
+			// Wenn der Benutzer existiert, setze den Betrag (nicht addieren)
+			_, err := db.Exec("UPDATE users SET balance = $1 WHERE user_id = $2 AND guild_id = $3", amount, userID, guildID)
 			if err != nil {
 				return fmt.Errorf("fehler beim Aktualisieren des Guthabens: %v", err)
 			}
 		} else {
 			// Wenn der Benutzer nicht existiert, füge ihn hinzu
-			_, err := db.Exec("INSERT INTO users (user_id, guild_id, balance) VALUES (?, ?, ?)", userID, guildID, amount)
+			_, err := db.Exec("INSERT INTO users (user_id, guild_id, balance) VALUES ($1, $2, $3)", userID, guildID, amount)
 			if err != nil {
 				return fmt.Errorf("fehler beim Hinzufügen eines neuen Benutzers: %v", err)
 			}
@@ -179,9 +174,23 @@ func MoneyAll(s *discordgo.Session, db *sql.DB, guildID string, amount int) erro
 	return nil
 }
 
-func MoneyGive(db *sql.DB, userID string, amount int) error {
-	_, err := db.Exec("UPDATE users SET balance = balance + ? WHERE user_id = ?", amount, userID)
-	return err
+func MoneyGive(db *sql.DB, userID string, guildID string, amount int) error {
+	// Erst prüfen, ob der Benutzer existiert
+	var exists bool
+	err := db.QueryRow("SELECT EXISTS(SELECT 1 FROM users WHERE user_id = $1 AND guild_id = $2)", userID, guildID).Scan(&exists)
+	if err != nil {
+		return fmt.Errorf("fehler beim Überprüfen der Datenbank: %v", err)
+	}
+
+	if exists {
+		// Benutzer existiert, Guthaben aktualisieren
+		_, err = db.Exec("UPDATE users SET balance = balance + $1 WHERE user_id = $2 AND guild_id = $3", amount, userID, guildID)
+		return err
+	} else {
+		// Benutzer existiert nicht, neuen Benutzer mit Startguthaben + Betrag erstellen
+		_, err = db.Exec("INSERT INTO users (user_id, guild_id, balance) VALUES ($1, $2, $3)", userID, guildID, 1000+amount)
+		return err
+	}
 }
 
 func SlotCommand(s *discordgo.Session, m *discordgo.InteractionCreate, db *sql.DB, bet int) {
@@ -201,18 +210,34 @@ func SlotCommand(s *discordgo.Session, m *discordgo.InteractionCreate, db *sql.D
 	setUserPlaying(m.Member.User.ID, true)
 	defer setUserPlaying(m.Member.User.ID, false)
 	
-	// Balance Überprüfen
+	// Balance Überprüfen - mit guild_id für bessere Datenkonsistenz
 	var balance float32
-	err := db.QueryRow("SELECT balance FROM users WHERE user_id = ?", m.Member.User.ID).Scan(&balance)
+	err := db.QueryRow("SELECT balance FROM users WHERE user_id = $1 AND guild_id = $2", m.Member.User.ID, m.GuildID).Scan(&balance)
 	if err != nil {
-		s.InteractionRespond(m.Interaction, &discordgo.InteractionResponse{
-			Type: discordgo.InteractionResponseChannelMessageWithSource,
-			Data: &discordgo.InteractionResponseData{
-				Content: "Fehler: Benutzer konnte nicht gefunden werden.",
-				Flags: discordgo.MessageFlagsEphemeral,
-			},
-		})
-		return
+		if err == sql.ErrNoRows {
+			// Benutzer existiert nicht, erstelle ihn mit Startguthaben
+			_, err = db.Exec("INSERT INTO users (user_id, guild_id, balance) VALUES ($1, $2, $3)", m.Member.User.ID, m.GuildID, 1000)
+			if err != nil {
+				s.InteractionRespond(m.Interaction, &discordgo.InteractionResponse{
+					Type: discordgo.InteractionResponseChannelMessageWithSource,
+					Data: &discordgo.InteractionResponseData{
+						Content: "Fehler beim Erstellen des Benutzerkontos.",
+						Flags: discordgo.MessageFlagsEphemeral,
+					},
+				})
+				return
+			}
+			balance = 1000
+		} else {
+			s.InteractionRespond(m.Interaction, &discordgo.InteractionResponse{
+				Type: discordgo.InteractionResponseChannelMessageWithSource,
+				Data: &discordgo.InteractionResponseData{
+					Content: "Fehler: Benutzer konnte nicht gefunden werden.",
+					Flags: discordgo.MessageFlagsEphemeral,
+				},
+			})
+			return
+		}
 	}
 
 	if bet < 1 {
@@ -263,15 +288,15 @@ func SlotCommand(s *discordgo.Session, m *discordgo.InteractionCreate, db *sql.D
 		embed.Description = fmt.Sprintf("%s spielt gerade!\n\n%s", fmt.Sprintf("<@%s>", m.Member.User.ID), formatSlotBoard(board))
 		s.ChannelMessageEditEmbed(m.ChannelID, msg.ID, embed)
 		time.Sleep(1 * time.Second)
-}
+	}
 
 	// Gewinn berechnen
 	fixedBoard := convertToFixedArray(board)
 	payout, winningLines := calculatePayoutWithCombinations(fixedBoard, bet)
 	if payout > 0 {
-		db.Exec("UPDATE users SET balance = balance + ? WHERE user_id = ?", payout-float32(bet), m.Member.User.ID)
+		db.Exec("UPDATE users SET balance = balance + $1 WHERE user_id = $2 AND guild_id = $3", payout-float32(bet), m.Member.User.ID, m.GuildID)
 	} else {
-		db.Exec("UPDATE users SET balance = balance - ? WHERE user_id = ?", bet, m.Member.User.ID)
+		db.Exec("UPDATE users SET balance = balance - $1 WHERE user_id = $2 AND guild_id = $3", bet, m.Member.User.ID, m.GuildID)
 	}
 
 	// Ergebnis-Embed
@@ -304,14 +329,18 @@ func SlotCommand(s *discordgo.Session, m *discordgo.InteractionCreate, db *sql.D
 		Timestamp: time.Now().Format(time.RFC3339),
 	}
 	s.ChannelMessageEditEmbed(m.ChannelID, msg.ID, resultEmbed)
-
 }
 
 func GetUserBalance(db *sql.DB, userID string, guildID string) (float64, error) {
 	var balance float64
-	err := db.QueryRow("SELECT balance FROM users WHERE user_id = ? AND guild_id = ?", userID, guildID).Scan(&balance)
+	err := db.QueryRow("SELECT balance FROM users WHERE user_id = $1 AND guild_id = $2", userID, guildID).Scan(&balance)
 	if err == sql.ErrNoRows {
-		return 0, nil
+		// Benutzer existiert nicht, erstelle ihn mit Startguthaben
+		_, err = db.Exec("INSERT INTO users (user_id, guild_id, balance) VALUES ($1, $2, $3)", userID, guildID, 1000)
+		if err != nil {
+			return 0, err
+		}
+		return 1000, nil
 	}
 	return balance, err
 }
@@ -335,16 +364,32 @@ func AutoSlotCommand(s *discordgo.Session, m *discordgo.InteractionCreate, db *s
 
     // Balance überprüfen
     var balance float32
-    err := db.QueryRow("SELECT balance FROM users WHERE user_id = ?", m.Member.User.ID).Scan(&balance)
+    err := db.QueryRow("SELECT balance FROM users WHERE user_id = $1 AND guild_id = $2", m.Member.User.ID, m.GuildID).Scan(&balance)
     if err != nil {
-        s.InteractionRespond(m.Interaction, &discordgo.InteractionResponse{
-            Type: discordgo.InteractionResponseChannelMessageWithSource,
-            Data: &discordgo.InteractionResponseData{
-                Content: "Fehler: Benutzer konnte nicht gefunden werden.",
-                Flags: discordgo.MessageFlagsEphemeral,
-            },
-        })
-        return
+        if err == sql.ErrNoRows {
+            // Benutzer existiert nicht, erstelle ihn mit Startguthaben
+            _, err = db.Exec("INSERT INTO users (user_id, guild_id, balance) VALUES ($1, $2, $3)", m.Member.User.ID, m.GuildID, 1000)
+            if err != nil {
+                s.InteractionRespond(m.Interaction, &discordgo.InteractionResponse{
+                    Type: discordgo.InteractionResponseChannelMessageWithSource,
+                    Data: &discordgo.InteractionResponseData{
+                        Content: "Fehler beim Erstellen des Benutzerkontos.",
+                        Flags: discordgo.MessageFlagsEphemeral,
+                    },
+                })
+                return
+            }
+            balance = 1000
+        } else {
+            s.InteractionRespond(m.Interaction, &discordgo.InteractionResponse{
+                Type: discordgo.InteractionResponseChannelMessageWithSource,
+                Data: &discordgo.InteractionResponseData{
+                    Content: "Fehler: Benutzer konnte nicht gefunden werden.",
+                    Flags: discordgo.MessageFlagsEphemeral,
+                },
+            })
+            return
+        }
     }
 
     if bet < 1 {
@@ -429,5 +474,5 @@ func AutoSlotCommand(s *discordgo.Session, m *discordgo.InteractionCreate, db *s
     s.ChannelMessageEditEmbed(m.ChannelID, msg.ID, finalEmbed)
 
     // Endgültiges Guthaben in der Datenbank speichern
-    db.Exec("UPDATE users SET balance = ? WHERE user_id = ?", currentBalance, m.Member.User.ID)
+    db.Exec("UPDATE users SET balance = $1 WHERE user_id = $2 AND guild_id = $3", currentBalance, m.Member.User.ID, m.GuildID)
 }

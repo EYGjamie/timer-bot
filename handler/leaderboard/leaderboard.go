@@ -12,12 +12,13 @@ import (
 // Handler für das Leaderboard
 func LeaderboardHandler(s *discordgo.Session, m *discordgo.InteractionCreate, db *sql.DB) {
 	// Daten aus der Datenbank abrufen, gefiltert nach der aktuellen Guild-ID
-	rows, err := db.Query("SELECT user_id, balance FROM users WHERE guild_id = ? ORDER BY balance DESC LIMIT 50", m.GuildID)
+	rows, err := db.Query("SELECT user_id, balance FROM users WHERE guild_id = $1 ORDER BY balance DESC LIMIT 50", m.GuildID)
 	if err != nil {
 		s.InteractionRespond(m.Interaction, &discordgo.InteractionResponse{
 			Type: discordgo.InteractionResponseChannelMessageWithSource,
 			Data: &discordgo.InteractionResponseData{
 				Content: "Fehler beim Abrufen der Rangliste.",
+				Flags: discordgo.MessageFlagsEphemeral,
 			},
 		})
 		return
@@ -38,6 +39,7 @@ func LeaderboardHandler(s *discordgo.Session, m *discordgo.InteractionCreate, db
 				Type: discordgo.InteractionResponseChannelMessageWithSource,
 				Data: &discordgo.InteractionResponseData{
 					Content: "Fehler beim Verarbeiten der Daten.",
+					Flags: discordgo.MessageFlagsEphemeral,
 				},
 			})
 			return
@@ -51,6 +53,30 @@ func LeaderboardHandler(s *discordgo.Session, m *discordgo.InteractionCreate, db
 		})
 	}
 
+	// Prüfe auf mögliche Fehler beim Iterieren über die Rows
+	if err = rows.Err(); err != nil {
+		s.InteractionRespond(m.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseChannelMessageWithSource,
+			Data: &discordgo.InteractionResponseData{
+				Content: "Fehler beim Lesen der Datenbankdaten.",
+				Flags: discordgo.MessageFlagsEphemeral,
+			},
+		})
+		return
+	}
+
+	// Prüfe ob Daten vorhanden sind
+	if len(leaderboard) == 0 {
+		s.InteractionRespond(m.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseChannelMessageWithSource,
+			Data: &discordgo.InteractionResponseData{
+				Content: "Keine Spielerdaten gefunden. Spielt zuerst ein paar Runden!",
+				Flags: discordgo.MessageFlagsEphemeral,
+			},
+		})
+		return
+	}
+
 	// Sortieren, falls nötig (obwohl SQL bereits sortiert)
 	sort.SliceStable(leaderboard, func(i, j int) bool {
 		return leaderboard[i].Balance > leaderboard[j].Balance
@@ -59,16 +85,28 @@ func LeaderboardHandler(s *discordgo.Session, m *discordgo.InteractionCreate, db
 	// Rangliste formatieren
 	description := ""
 	for i, entry := range leaderboard {
-		username := fmt.Sprintf("<@%s>", entry.UserID) // Discord-Mention
-		description += fmt.Sprintf("%d. %s - %.0f Spielgeld\n", i+1, username, entry.Balance)
+		position := fmt.Sprintf("%d.", i+1)
+		if i == 0 {
+			position = "🥇"
+		} else if i == 1 {
+			position = "🥈"
+		} else if i == 2 {
+			position = "🥉"
+		}
+
+		username := fmt.Sprintf("<@%s>", entry.UserID)
+		description += fmt.Sprintf("%s %s - %.0f Müller Coins\n", position, username, entry.Balance)
 	}
 
 	// Embed erstellen
 	embed := &discordgo.MessageEmbed{
-		Title:       "Leaderboard",
+		Title:       "🏆 Leaderboard - Müller Coins",
 		Description: description,
 		Color:       0x00ff00,
-		Timestamp:   time.Now().Format(time.RFC3339),
+		Footer: &discordgo.MessageEmbedFooter{
+			Text: fmt.Sprintf("Insgesamt %d Spieler", len(leaderboard)),
+		},
+		Timestamp: time.Now().Format(time.RFC3339),
 	}
 
 	s.InteractionRespond(m.Interaction, &discordgo.InteractionResponse{
