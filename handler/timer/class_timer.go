@@ -12,7 +12,6 @@ import (
 )
 
 const lectureChannelID = "1236999352329965608"
-const totalLectureMinutes = 195
 const icalURL = "https://stuv.app/MGH-TINF23/ical"
 const maxLectureDuration = 4 * time.Hour
 
@@ -141,7 +140,7 @@ func printUpcomingLectures(cal *ics.Calendar, days int) {
 			fmt.Println()
 		}
 	}
-	fmt.Println("=====================================\n")
+	fmt.Println("=====================================")
 }
 
 func getCurrentLectureFromCalendar() *LectureEvent {
@@ -214,33 +213,6 @@ func getCurrentLectureSlot() LectureSlot {
 	return None
 }
 
-func getLectureTimeRange(slot LectureSlot) (start int, end int) {
-	switch slot {
-	case Morning:
-		return 540, 735
-	case Afternoon:
-		return 780, 975
-	default:
-		return 0, 0
-	}
-}
-
-func getLectureProgress(slot LectureSlot) (remaining int, percentage float64) {
-	start, end := getLectureTimeRange(slot)
-	if start == 0 && end == 0 {
-		return 0, 0
-	}
-
-	now := time.Now()
-	currentMinutes := now.Hour()*60 + now.Minute()
-
-	elapsed := currentMinutes - start
-	remaining = end - currentMinutes
-	percentage = float64(elapsed) / float64(totalLectureMinutes) * 100
-
-	return
-}
-
 func getLectureProgressFromEvent(lecture *LectureEvent) (remaining int, percentage float64) {
 	now := time.Now()
 
@@ -283,13 +255,9 @@ func createOrUpdateLectureEmbed(s *discordgo.Session, lecture *LectureEvent) {
 	}
 
 	remaining, percentage := getLectureProgressFromEvent(lecture)
-	if remaining <= 0 {
-		currentLecture = nil
-		return
-	}
 
 	// Titel mit Vorlesungsname und Zeitraum
-	title := fmt.Sprintf("%s", lecture.Name)
+	title := lecture.Name
 	timeRange := fmt.Sprintf("%s - %s",
 		lecture.Start.Format("15:04"),
 		lecture.End.Format("15:04"))
@@ -297,6 +265,8 @@ func createOrUpdateLectureEmbed(s *discordgo.Session, lecture *LectureEvent) {
 	description := "Die Vorlesung läuft noch... Durchhalten!"
 	if remaining <= 0 {
 		description = "Geschafft! 🎉"
+		remaining = 0
+		percentage = 100
 	}
 
 	fields := []*discordgo.MessageEmbedField{
@@ -352,6 +322,11 @@ func createOrUpdateLectureEmbed(s *discordgo.Session, lecture *LectureEvent) {
 		if err != nil {
 			fmt.Println("Fehler beim Bearbeiten der Nachricht:", err)
 		}
+	}
+
+	// Wenn die Vorlesung vorbei ist, currentLecture zurücksetzen
+	if remaining <= 0 {
+		currentLecture = nil
 	}
 }
 
