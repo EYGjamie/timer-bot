@@ -1,14 +1,20 @@
 package timer
 
 import (
+	"bytes"
 	"fmt"
+	"io"
+	"net/http"
 	"time"
 
+	"github.com/arran4/golang-ical"
 	"github.com/bwmarrin/discordgo"
 )
 
 const lectureChannelID = "1236999352329965608"
 const totalLectureMinutes = 195
+const icalURL = "https://stuv.app/MGH-TINF23/ical"
+const maxLectureDuration = 4 * time.Hour
 
 type LectureSlot string
 
@@ -18,13 +24,170 @@ const (
 	None      LectureSlot = "none"
 )
 
+type LectureEvent struct {
+	Name  string
+	Start time.Time
+	End   time.Time
+}
+
 type ActiveLectureState struct {
-	MessageID   string
-	LectureSlot LectureSlot
-	Date        string
+	MessageID    string
+	LectureSlot  LectureSlot
+	Date         string
+	LectureName  string
+	LectureStart time.Time
+	LectureEnd   time.Time
 }
 
 var currentLecture *ActiveLectureState
+var cachedCalendar *ics.Calendar
+var lastCalendarFetch time.Time
+
+func fetchCalendar() (*ics.Calendar, error) {
+	// Cache für 1 Woche
+	if cachedCalendar != nil && time.Since(lastCalendarFetch) < 7*24*time.Hour {
+		return cachedCalendar, nil
+	}
+
+	fmt.Println("📅 Lade Kalender von", icalURL)
+	resp, err := http.Get(icalURL)
+	if err != nil {
+		return nil, fmt.Errorf("fehler beim Abrufen des Kalenders: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("fehler beim Lesen des Kalenders: %w", err)
+	}
+
+	cal, err := ics.ParseCalendar(bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("fehler beim Parsen des Kalenders: %w", err)
+	}
+
+	cachedCalendar = cal
+	lastCalendarFetch = time.Now()
+
+	// Zeige die nächsten 7 Tage an Vorlesungen
+	printUpcomingLectures(cal, 7)
+
+	return cal, nil
+}
+
+func convertToLocalTime(t time.Time) time.Time {
+	// Zeitzone auf Europe/Berlin setzen
+	loc, err := time.LoadLocation("Europe/Berlin")
+	if err != nil {
+		fmt.Println("Warnung: Konnte Zeitzone nicht laden:", err)
+		return t
+	}
+	return t.In(loc)
+}
+
+func printUpcomingLectures(cal *ics.Calendar, days int) {
+	fmt.Println("\n📚 Vorlesungen der nächsten", days, "Tage:")
+	fmt.Println("=====================================")
+
+	now := time.Now()
+	endDate := now.AddDate(0, 0, days)
+
+	var lectures []LectureEvent
+
+	for _, event := range cal.Events() {
+		start, err := event.GetStartAt()
+		if err != nil {
+			continue
+		}
+
+		end, err := event.GetEndAt()
+		if err != nil {
+			continue
+		}
+
+		// In lokale Zeitzone konvertieren
+		start = convertToLocalTime(start)
+		end = convertToLocalTime(end)
+
+		duration := end.Sub(start)
+
+		// Nur Events unter 4 Stunden (Vorlesungen)
+		if duration >= maxLectureDuration {
+			continue
+		}
+
+		// Nur Events in den nächsten X Tagen
+		if start.After(now) && start.Before(endDate) {
+			name := event.GetProperty(ics.ComponentPropertySummary).Value
+			lectures = append(lectures, LectureEvent{
+				Name:  name,
+				Start: start,
+				End:   end,
+			})
+		}
+	}
+
+	if len(lectures) == 0 {
+		fmt.Println("❌ Keine Vorlesungen gefunden")
+	} else {
+		for _, lecture := range lectures {
+			duration := lecture.End.Sub(lecture.Start)
+			fmt.Printf("📖 %s\n", lecture.Name)
+			fmt.Printf("   🕐 %s - %s (%s, %.0f Min.)\n",
+				lecture.Start.Format("02.01.2006 15:04"),
+				lecture.End.Format("15:04"),
+				lecture.Start.Weekday(),
+				duration.Minutes())
+			fmt.Println()
+		}
+	}
+	fmt.Println("=====================================\n")
+}
+
+func getCurrentLectureFromCalendar() *LectureEvent {
+	cal, err := fetchCalendar()
+	if err != nil {
+		fmt.Println("Fehler beim Abrufen des Kalenders:", err)
+		return nil
+	}
+
+	now := time.Now()
+
+	for _, event := range cal.Events() {
+		start, err := event.GetStartAt()
+		if err != nil {
+			continue
+		}
+
+		end, err := event.GetEndAt()
+		if err != nil {
+			continue
+		}
+
+		// In lokale Zeitzone konvertieren
+		start = convertToLocalTime(start)
+		end = convertToLocalTime(end)
+
+		duration := end.Sub(start)
+
+		// Nur Events unter 4 Stunden (Vorlesungen)
+		if duration >= maxLectureDuration {
+			continue
+		}
+
+		// Prüfen ob das Event gerade läuft
+		if now.After(start) && now.Before(end) {
+			name := event.GetProperty(ics.ComponentPropertySummary).Value
+			return &LectureEvent{
+				Name:  name,
+				Start: start,
+				End:   end,
+			}
+		}
+	}
+
+	return nil
+}
 
 func getCurrentLectureSlot() LectureSlot {
 	now := time.Now()
@@ -78,6 +241,19 @@ func getLectureProgress(slot LectureSlot) (remaining int, percentage float64) {
 	return
 }
 
+func getLectureProgressFromEvent(lecture *LectureEvent) (remaining int, percentage float64) {
+	now := time.Now()
+
+	totalDuration := lecture.End.Sub(lecture.Start)
+	elapsed := now.Sub(lecture.Start)
+	remainingDuration := lecture.End.Sub(now)
+
+	remaining = int(remainingDuration.Minutes())
+	percentage = (elapsed.Seconds() / totalDuration.Seconds()) * 100
+
+	return
+}
+
 func formatTimeFromMinutes(minutes int) string {
 	h := minutes / 60
 	m := minutes % 60
@@ -98,7 +274,7 @@ func repeatString(char string, count int) string {
 	return result
 }
 
-func createOrUpdateLectureEmbed(s *discordgo.Session, slot LectureSlot) {
+func createOrUpdateLectureEmbed(s *discordgo.Session, lecture *LectureEvent) {
 	// Channel abrufen
 	channel, err := s.Channel(lectureChannelID)
 	if err != nil {
@@ -106,19 +282,17 @@ func createOrUpdateLectureEmbed(s *discordgo.Session, slot LectureSlot) {
 		return
 	}
 
-	remaining, percentage := getLectureProgress(slot)
-	if slot == None || remaining <= 0 {
+	remaining, percentage := getLectureProgressFromEvent(lecture)
+	if remaining <= 0 {
 		currentLecture = nil
 		return
 	}
 
-	title := ""
-	switch slot {
-	case Morning:
-		title = "Vorlesung (Morgen) 9:00 - 12:15"
-	case Afternoon:
-		title = "Vorlesung (Nachmittag) 13:00 - 16:15"
-	}
+	// Titel mit Vorlesungsname und Zeitraum
+	title := fmt.Sprintf("%s", lecture.Name)
+	timeRange := fmt.Sprintf("%s - %s",
+		lecture.Start.Format("15:04"),
+		lecture.End.Format("15:04"))
 
 	description := "Die Vorlesung läuft noch... Durchhalten!"
 	if remaining <= 0 {
@@ -126,6 +300,11 @@ func createOrUpdateLectureEmbed(s *discordgo.Session, slot LectureSlot) {
 	}
 
 	fields := []*discordgo.MessageEmbedField{
+		{
+			Name:   "Uhrzeit",
+			Value:  timeRange,
+			Inline: true,
+		},
 		{
 			Name:   "Verbleibende Zeit",
 			Value:  formatTimeFromMinutes(remaining),
@@ -160,9 +339,12 @@ func createOrUpdateLectureEmbed(s *discordgo.Session, slot LectureSlot) {
 		}
 
 		currentLecture = &ActiveLectureState{
-			MessageID:   msg.ID,
-			LectureSlot: slot,
-			Date:        time.Now().Format("2006-01-02"),
+			MessageID:    msg.ID,
+			LectureSlot:  getCurrentLectureSlot(),
+			Date:         time.Now().Format("2006-01-02"),
+			LectureName:  lecture.Name,
+			LectureStart: lecture.Start,
+			LectureEnd:   lecture.End,
 		}
 	} else {
 		// Nachricht aktualisieren
@@ -174,28 +356,44 @@ func createOrUpdateLectureEmbed(s *discordgo.Session, slot LectureSlot) {
 }
 
 func CheckAndUpdateLecture(s *discordgo.Session) {
-	slot := getCurrentLectureSlot()
-	if slot == None {
+	lecture := getCurrentLectureFromCalendar()
+
+	if lecture == nil {
 		if currentLecture != nil {
 			currentLecture = nil
 		}
 		return
 	}
 
-	if currentLecture == nil || currentLecture.LectureSlot != slot {
+	// Neue Vorlesung oder keine aktive Vorlesung
+	if currentLecture == nil || currentLecture.LectureName != lecture.Name || !currentLecture.LectureStart.Equal(lecture.Start) {
 		currentLecture = nil
-		createOrUpdateLectureEmbed(s, slot)
+		createOrUpdateLectureEmbed(s, lecture)
 	} else {
-		createOrUpdateLectureEmbed(s, slot)
+		createOrUpdateLectureEmbed(s, lecture)
 	}
 }
 
 func StartLectureTimer(s *discordgo.Session) {
 	fmt.Println("Starte LectureTimer-Intervall (jede Minute)")
+
+	// Kalender beim Start einmal laden
+	_, _ = fetchCalendar()
+
 	ticker := time.NewTicker(1 * time.Minute)
 	go func() {
 		for range ticker.C {
 			CheckAndUpdateLecture(s)
 		}
 	}()
+}
+
+// TestCalendarDownload ist eine öffentliche Funktion zum Testen des Kalender-Downloads
+func TestCalendarDownload() {
+	cal, err := fetchCalendar()
+	if err != nil {
+		fmt.Println("❌ Fehler:", err)
+		return
+	}
+	fmt.Println("✅ Kalender erfolgreich geladen! Anzahl Events:", len(cal.Events()))
 }
