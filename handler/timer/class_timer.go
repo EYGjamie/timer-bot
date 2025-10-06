@@ -257,10 +257,12 @@ func createOrUpdateLectureEmbed(s *discordgo.Session, lecture *LectureEvent) {
 	remaining, percentage := getLectureProgressFromEvent(lecture)
 
 	// Titel mit Vorlesungsname und Zeitraum
-	title := lecture.Name
 	timeRange := fmt.Sprintf("%s - %s",
-		lecture.Start.Format("15:04"),
-		lecture.End.Format("15:04"))
+			lecture.Start.Format("15:04"),
+			lecture.End.Format("15:04"))
+
+	title := lecture.Name + " (" + timeRange + ")"
+	
 
 	description := "Die Vorlesung läuft noch... Durchhalten!"
 	if remaining <= 0 {
@@ -270,11 +272,6 @@ func createOrUpdateLectureEmbed(s *discordgo.Session, lecture *LectureEvent) {
 	}
 
 	fields := []*discordgo.MessageEmbedField{
-		{
-			Name:   "Uhrzeit",
-			Value:  timeRange,
-			Inline: true,
-		},
 		{
 			Name:   "Verbleibende Zeit",
 			Value:  formatTimeFromMinutes(remaining),
